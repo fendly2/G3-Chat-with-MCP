@@ -1,0 +1,99 @@
+import sys
+import json
+import logging
+import os
+
+# Ensure win32com is installed: pip install pywin32
+try:
+    import pythoncom
+    import win32com.client
+except ImportError:
+    # Graceful fallback for non-Windows dev environments
+    pythoncom = None
+    win32com = None
+
+logging.basicConfig(level=logging.ERROR)
+
+def get_outlook_messages(count=5):
+    if not pythoncom:
+        return [{"error": "win32com library not found (Windows only)."}]
+        
+    try:
+        # Crucial for running in a secondary process/thread
+        pythoncom.CoInitialize()
+        
+        outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+        inbox = outlook.GetDefaultFolder(6) # 6 = Inbox
+        items = inbox.Items
+        items.Sort("[ReceivedTime]", True)
+        
+        results = []
+        # Loop with safety limit
+        for i in range(min(count, 20)):
+            try:
+                msg = items[i]
+                results.append({
+                    "subject": msg.Subject,
+                    "sender": msg.SenderName,
+                    "preview": msg.Body[:150].replace("\r\n", " ") + "..."
+                })
+            except Exception:
+                continue
+        return results
+    except Exception as e:
+        return [{"error": f"Outlook Access Failed: {str(e)}"}]
+
+def handle_request(line):
+    try:
+        req = json.loads(line)
+        method = req.get("method")
+        msg_id = req.get("id")
+        
+        response = {"jsonrpc": "2.0", "id": msg_id}
+
+        if method == "tools/list":
+            response["result"] = {
+                "tools": [{
+                    "name": "read_outlook_emails",
+                    "description": "Fetch recent emails from the user's local Outlook Inbox.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "count": {"type": "integer", "description": "Number of emails to fetch (default 5)"}
+                        }
+                    }
+                }]
+            }
+            
+        elif method == "tools/call":
+            params = req.get("params", {})
+            name = params.get("name")
+            args = params.get("arguments", {})
+            
+            if name == "read_outlook_emails":
+                data = get_outlook_messages(args.get("count", 5))
+                response["result"] = {
+                    "content": [{"type": "text", "text": json.dumps(data, indent=2)}]
+                }
+            else:
+                response["error"] = {"code": -32601, "message": "Method not found"}
+        
+        else:
+            return # Ignore irrelevant messages
+
+        sys.stdout.write(json.dumps(response) + "\n")
+        sys.stdout.flush()
+        
+    except Exception as e:
+        logging.error(f"Handler Error: {e}")
+
+if __name__ == "__main__":
+    # Unbuffered IO for instant MCP communication
+    if sys.platform == 'win32':
+        import msvcrt
+        msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
+        msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+
+    for line in sys.stdin:
+        if line.strip():
+            handle_request(line)
