@@ -24,7 +24,10 @@ import {
   Play,
   Square, // Used for Stop
   Power,
-  Server
+  Server,
+  Wrench, // Icon for tools
+  Activity,
+  ShieldCheck
 } from "lucide-react";
 
 // --- Constants & Config ---
@@ -76,7 +79,7 @@ async function streamChat(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${settings.apiKey}`,
+        "Authorization": `Bearer ${settings.apiKey || "dummy"}`, // Allow empty key for local LLMs
         "X-LLM-Base-URL": settings.llmBaseUrl
       },
       body: JSON.stringify({
@@ -242,7 +245,6 @@ const SettingsModal = ({ open, onClose, settings, setSettings }: any) => {
   const toggleServer = async (name: string, currentStatus: string) => {
     const isRunning = currentStatus === 'running';
     try {
-      // We send the Desired enabled state. If it's running, we want to disable (false).
       await fetch(`${BACKEND_URL}/mcp/servers/${name}`, { 
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -297,20 +299,40 @@ const SettingsModal = ({ open, onClose, settings, setSettings }: any) => {
           
           {activeTab === 'general' ? (
               <>
+                {/* System Status Indicator - Replaces the Toggle */}
+                <div className="p-5 rounded-2xl bg-blue-50/50 border border-blue-100 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+                            <ShieldCheck size={20} />
+                        </div>
+                        <div>
+                            <div className="text-sm font-bold text-gray-900">Agentic Capabilities</div>
+                            <div className="text-[10px] text-gray-500 font-medium mt-0.5">Tools & Skills System Active</div>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-white rounded-full border border-blue-100 shadow-sm">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <span className="text-[10px] font-bold text-gray-600 uppercase tracking-wider">Enabled</span>
+                    </div>
+                </div>
+
                 <div className="space-y-2">
                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">AI Engine Identity</label>
                     <input className="w-full px-5 py-4 bg-gray-100/50 border border-transparent focus:bg-white rounded-2xl focus:ring-4 focus:ring-blue-500/5 focus:border-blue-400 outline-none text-base transition-all font-bold text-gray-800 placeholder-gray-300"
-                    value={settings.model} onChange={e => setSettings({...settings, model: e.target.value})} placeholder="gpt-4o" />
+                    value={settings.model} onChange={e => setSettings({...settings, model: e.target.value})} placeholder="gpt-4o, deepseek-r1, llama3..." />
                 </div>
+                
+                <div className="space-y-2">
+                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Network Gateway (Base URL)</label>
+                    <input className="w-full px-5 py-4 bg-gray-100/50 border border-transparent focus:bg-white rounded-2xl focus:ring-4 focus:ring-blue-500/5 focus:border-blue-400 outline-none text-base font-mono text-gray-500 transition-all"
+                    value={settings.llmBaseUrl} onChange={e => setSettings({...settings, llmBaseUrl: e.target.value})} placeholder="https://api.openai.com/v1" />
+                    <p className="px-1 text-[10px] text-gray-400 font-medium">Compatible with OpenAI, DeepSeek, Ollama, vLLM, etc.</p>
+                </div>
+
                 <div className="space-y-2">
                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Master Key (Auth)</label>
                     <input type="password" className="w-full px-5 py-4 bg-gray-100/50 border border-transparent focus:bg-white rounded-2xl focus:ring-4 focus:ring-blue-500/5 focus:border-blue-400 outline-none text-base font-mono transition-all text-gray-800"
-                    value={settings.apiKey} onChange={e => setSettings({...settings, apiKey: e.target.value})} placeholder="••••••••••••••••" />
-                </div>
-                <div className="space-y-2">
-                    <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Network Gateway</label>
-                    <input className="w-full px-5 py-4 bg-gray-100/50 border border-transparent focus:bg-white rounded-2xl focus:ring-4 focus:ring-blue-500/5 focus:border-blue-400 outline-none text-base font-mono text-gray-500 transition-all"
-                    value={settings.llmBaseUrl} onChange={e => setSettings({...settings, llmBaseUrl: e.target.value})} />
+                    value={settings.apiKey} onChange={e => setSettings({...settings, apiKey: e.target.value})} placeholder="Optional for local models" />
                 </div>
               </>
           ) : (
@@ -320,8 +342,9 @@ const SettingsModal = ({ open, onClose, settings, setSettings }: any) => {
                  <div className="space-y-3">
                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Active Integrations</label>
                     {mcpServers.length === 0 && (
-                        <div className="p-4 rounded-2xl bg-gray-50 border border-dashed border-gray-200 text-center text-xs text-gray-400">
-                            No integrations running.
+                        <div className="p-8 rounded-2xl bg-gray-50 border border-dashed border-gray-200 text-center flex flex-col items-center justify-center gap-3">
+                            <Activity size={24} className="text-gray-300" />
+                            <span className="text-xs text-gray-400 font-medium">No active integrations found.</span>
                         </div>
                     )}
                     {mcpServers.map(s => (
