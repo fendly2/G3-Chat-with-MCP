@@ -5,7 +5,7 @@
 
 import os
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -42,7 +42,6 @@ class ChatCompletionRequest(BaseModel):
     messages: List[Message]
     stream: bool = False
     temperature: float = 0.7
-    # Removed enable_tools flag, it is now enabled by default
 
 class AddServerRequest(BaseModel):
     name: str
@@ -57,56 +56,36 @@ class ToggleServerRequest(BaseModel):
 async def startup_event():
     """Start MCP servers on backend startup with auto-discovery."""
     print("--- DellTech AI Backend Starting ---")
-    
-    # --- Auto-Configuration Logic ---
-    config_path = "mcp_config.json"
-    should_configure = False
-    
-    if not os.path.exists(config_path):
-        should_configure = True
-    else:
-        try:
-            with open(config_path, 'r') as f:
-                data = json.load(f)
-                if not data.get("servers"): should_configure = True
-        except:
-            should_configure = True
-
-    if should_configure:
-        print("[System] Configuring default MCP servers...")
-        cwd = os.getcwd()
-        # Look for the script in current or backend folder
-        candidates = [
-            os.path.join(cwd, "backend", "outlook_MCP_server.py"),
-            os.path.join(cwd, "outlook_MCP_server.py")
-        ]
-        
-        script_path = next((p for p in candidates if os.path.exists(p)), None)
-        
-        if script_path:
-            # Normalize path for JSON
-            script_path = script_path.replace("\\", "/")
-            default_config = {
-                "servers": {
-                    "Outlook-Sync": {
-                        "command": "python",
-                        "args": [script_path],
-                        "enabled": True,
-                        "env": {}
-                    }
-                }
-            }
-            with open(config_path, "w") as f:
-                json.dump(default_config, f, indent=2)
-            print(f"[System] Auto-configured Outlook MCP at {script_path}")
-        else:
-            print("[System] Outlook script not found. Skipping auto-config.")
-            
     await mcp_manager.start_all()
 
 @app.on_event("shutdown")
 async def shutdown_event():
     await mcp_manager.stop_all()
+
+# --- WebSocket Endpoint for Remote Agents ---
+@app.websocket("/ws/mcp")
+async def websocket_mcp_endpoint(websocket: WebSocket):
+    """
+    Reverse WebSocket: The Laptop connects here.
+    Server uses this socket to send commands TO the laptop.
+    """
+    await websocket.accept()
+    client_host = websocket.client.host
+    client_id = f"laptop-agent-{client_host}"
+    print(f"[WS] Remote Agent connected: {client_id}")
+    
+    try:
+        # Delegate the entire connection lifecycle to the Manager
+        # This will block until the connection closes
+        await mcp_manager.handle_remote_connection(client_id, websocket)
+            
+    except WebSocketDisconnect:
+        print(f"[WS] Remote Agent disconnected (Standard): {client_id}")
+    except Exception as e:
+        print(f"[WS] Error in connection {client_id}: {e}")
+    finally:
+        # Ensure cleanup happens
+        await mcp_manager.remove_remote_connection(client_id)
 
 @app.get("/health")
 async def health_check():
@@ -140,20 +119,18 @@ async def smart_stream_generator(request: ChatCompletionRequest, req: Request):
     api_key = req.headers.get("Authorization", "").replace("Bearer ", "")
     llm_base_url = req.headers.get("X-LLM-Base-URL", "https://api.openai.com/v1")
     
-    # COMPATIBILITY FIX: Allow empty API keys for local LLMs (Ollama, LM Studio, etc)
+    # COMPATIBILITY FIX: Allow empty API keys for local LLMs
     if not api_key: 
         api_key = "dummy-key-for-local-llm"
 
     try:
         client = OpenAI(api_key=api_key, base_url=llm_base_url)
         
-        # 1. Fetch available tools dynamically from MCP Manager
-        # Always fetch tools by default as per user request
+        # 1. Fetch available tools dynamically from MCP Manager (Local + Remote)
         tools = await mcp_manager.get_all_tools_definitions()
         
         messages = [{"role": m.role, "content": m.content, "tool_call_id": m.tool_call_id} for m in request.messages]
         
-        # System Prompt Injection if not present
         if messages and messages[0]['role'] != 'system':
             messages.insert(0, {"role": "system", "content": "You are a helpful Dell Tech assistant. You have access to tools. Use them whenever data is needed (email, calendar)."})
 
@@ -170,8 +147,6 @@ async def smart_stream_generator(request: ChatCompletionRequest, req: Request):
         
         for chunk in stream:
             delta = chunk.choices[0].delta
-            
-            # Accumulate Tool Calls
             if delta.tool_calls:
                 for tc in delta.tool_calls:
                     if tc.index is not None:
@@ -181,48 +156,35 @@ async def smart_stream_generator(request: ChatCompletionRequest, req: Request):
                          if tc.function.name: tool_calls[tc.index]["function"]["name"] = tc.function.name
                          if tc.function.arguments: tool_calls[tc.index]["function"]["arguments"] += tc.function.arguments
             
-            # Yield Content immediately to user
             if delta.content:
                 yield f"data: {json.dumps(chunk.model_dump())}\n\n"
 
-        # --- Round 2: Tool Execution (if needed) ---
+        # --- Round 2: Tool Execution ---
         if tool_calls:
-             # Append the Assistant's "Thought" (the tool call) to history
-             messages.append({
-                 "role": "assistant",
-                 "content": None,
-                 "tool_calls": tool_calls
-             })
+             messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
              
              for tc in tool_calls:
                  func_name = tc["function"]["name"]
                  call_id = tc["id"]
                  
-                 # Notify Frontend: "I am starting a tool"
                  yield f"data: {json.dumps({'type': 'tool_start', 'tool': func_name})}\n\n"
                  
                  try:
                      args = json.loads(tc["function"]["arguments"])
                      print(f"[Orchestrator] Executing {func_name} with {args}")
                      
-                     # CALL MCP
+                     # CALL MCP (Manager routes to Local or Remote automatically)
                      result_str = await mcp_manager.execute_tool(func_name, args)
                      
-                     # Notify Frontend: "Tool done"
                      yield f"data: {json.dumps({'type': 'tool_end', 'result': result_str})}\n\n"
                      
-                     messages.append({
-                         "role": "tool",
-                         "tool_call_id": call_id,
-                         "content": str(result_str)
-                     })
+                     messages.append({"role": "tool", "tool_call_id": call_id, "content": str(result_str)})
                      
                  except Exception as e:
                      err_msg = f"Tool Execution Failed: {str(e)}"
                      yield f"data: {json.dumps({'type': 'error', 'message': err_msg})}\n\n"
                      messages.append({"role": "tool", "tool_call_id": call_id, "content": err_msg})
 
-             # --- Round 3: Final Answer based on Tool Results ---
              stream2 = client.chat.completions.create(
                 model=request.model,
                 messages=messages,

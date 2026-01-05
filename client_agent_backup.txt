@@ -1,0 +1,223 @@
+
+# ==========================================
+# FILE: client_agent.py
+# Usage: python client_agent.py --server ws://SERVER_IP:8000/ws/mcp
+# ==========================================
+
+import asyncio
+import json
+import logging
+import argparse
+import sys
+import platform
+import subprocess
+
+# Check dependencies
+try:
+    import websockets
+except ImportError:
+    print("Error: 'websockets' module not found. Please run: pip install websockets")
+    sys.exit(1)
+
+# Check Windows dependencies (Only needed for Outlook)
+try:
+    if platform.system() == "Windows":
+        import pythoncom
+        import win32com.client
+    else:
+        pythoncom = None
+        win32com = None
+except ImportError:
+    pythoncom = None
+    win32com = None
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# ==========================================
+# 🛠️ TOOL DEFINITIONS (Add your tools here)
+# ==========================================
+
+# --- Tool 1: Outlook Email Reader ---
+def tool_read_outlook(count=5):
+    """Access local Outlook application via COM"""
+    if not pythoncom:
+        return [{"error": "Windows and pywin32 required for Outlook."}]
+        
+    try:
+        # Initializing COM for this thread is mandatory
+        pythoncom.CoInitialize()
+        try:
+            outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+            inbox = outlook.GetDefaultFolder(6) # 6 = Inbox
+            items = inbox.Items
+            items.Sort("[ReceivedTime]", True)
+            
+            results = []
+            max_retries = min(count, 50) 
+            
+            for i in range(max_retries):
+                try:
+                    msg = items[i]
+                    results.append({
+                        "subject": msg.Subject,
+                        "sender": msg.SenderName,
+                        "received": str(msg.ReceivedTime),
+                        "preview": msg.Body[:200].replace("\r\n", " ") + "..."
+                    })
+                except IndexError:
+                    break
+                except Exception:
+                    continue
+            return results
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception as e:
+        return [{"error": f"Outlook Access Failed: {str(e)}"}]
+
+# --- Tool 2: System Info (Demo) ---
+def tool_get_system_info():
+    """Get basic info about the laptop host"""
+    info = {
+        "os": platform.system(),
+        "release": platform.release(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+    }
+    return info
+
+# ==========================================
+# 📚 TOOL REGISTRY
+# Register your functions here so the Server can see them
+# ==========================================
+
+TOOLS_REGISTRY = {
+    # Name used by AI
+    "read_outlook_emails": {
+        "func": tool_read_outlook,      # The Python function to call
+        "blocking": True,               # True if it does I/O (runs in thread), False if CPU only
+        "schema": {                     # The definition sent to OpenAI
+            "name": "read_outlook_emails",
+            "description": "Fetch recent emails from this user's local laptop Outlook.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer", "description": "Number of emails to fetch (default 5)"}
+                }
+            }
+        }
+    },
+    "get_laptop_status": {
+        "func": tool_get_system_info,
+        "blocking": False, 
+        "schema": {
+            "name": "get_laptop_status",
+            "description": "Get technical specifications of the user's local machine.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {} # No arguments needed
+            }
+        }
+    }
+}
+
+# ==========================================
+# 🔌 AGENT COMMUNICATION CORE
+# ==========================================
+
+async def heartbeat(ws):
+    """Send a ping every 30 seconds to keep firewall connections open"""
+    try:
+        while True:
+            await asyncio.sleep(30)
+            await ws.send(json.dumps({"method": "ping", "id": -1}))
+    except Exception:
+        pass
+
+async def agent_loop(server_uri):
+    print(f"🔌 Connecting to DellTech AI Server: {server_uri}")
+    print(f"🛠️  Loaded Tools: {list(TOOLS_REGISTRY.keys())}")
+    
+    while True:
+        try:
+            async with websockets.connect(server_uri) as websocket:
+                print("✅ Connected! Ready to execute commands.")
+                
+                heartbeat_task = asyncio.create_task(heartbeat(websocket))
+                
+                try:
+                    async for message in websocket:
+                        data = json.loads(message)
+                        await handle_message(websocket, data)
+                except websockets.ConnectionClosed:
+                    print("⚠️ Connection lost from server.")
+                finally:
+                    heartbeat_task.cancel()
+                    
+        except Exception as e:
+            print(f"❌ Connection Error: {e}")
+            print("🔄 Retrying in 5 seconds...")
+            await asyncio.sleep(5)
+
+async def handle_message(ws, data):
+    """Process incoming JSON-RPC requests"""
+    msg_id = data.get("id")
+    method = data.get("method")
+    params = data.get("params", {})
+    
+    # Handle Ping/Pong
+    if method == "ping": return
+    if data.get("result") == "pong": return
+    
+    logging.info(f"Received Command: {method}")
+    
+    response = {"jsonrpc": "2.0", "id": msg_id}
+    
+    if method == "tools/list":
+        # Dynamic Tool Listing
+        tools_list = [t["schema"] for t in TOOLS_REGISTRY.values()]
+        response["result"] = {"tools": tools_list}
+        
+    elif method == "tools/call":
+        name = params.get("name")
+        args = params.get("arguments", {})
+        
+        tool_def = TOOLS_REGISTRY.get(name)
+        
+        if tool_def:
+            print(f"🤖 Executing tool: {name} with args: {args}")
+            try:
+                func = tool_def["func"]
+                
+                # Execute: Blocking I/O vs Async/CPU
+                if tool_def.get("blocking", False):
+                    # Run in thread pool to avoid blocking WebSocket heartbeat
+                    result_data = await asyncio.to_thread(func, **args)
+                else:
+                    # Run directly
+                    result_data = func(**args)
+                
+                response["result"] = {
+                    "content": [{"type": "text", "text": json.dumps(result_data, indent=2)}]
+                }
+            except Exception as e:
+                err_msg = f"Execution Error: {str(e)}"
+                print(f"❌ {err_msg}")
+                response["error"] = {"code": -32000, "message": err_msg}
+        else:
+            response["error"] = {"code": -32601, "message": f"Tool '{name}' not found on this agent."}
+            
+    else:
+        return
+
+    # Send result back
+    await ws.send(json.dumps(response))
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="DellTech AI - Local Agent")
+    parser.add_argument("--server", type=str, required=True, help="WebSocket URI (e.g., ws://10.0.0.5:8000/ws/mcp)")
+    args = parser.parse_args()
+    
+    try:
+        asyncio.run(agent_loop(args.server))
+    except KeyboardInterrupt:
+        print("\n🛑 Agent stopped.")
