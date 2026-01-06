@@ -27,7 +27,8 @@ import {
   Server,
   Wrench, // Icon for tools
   Activity,
-  ShieldCheck
+  ShieldCheck,
+  BrainCircuit // Icon for thinking
 } from "lucide-react";
 
 // --- Constants & Config ---
@@ -112,7 +113,11 @@ async function streamChat(
               onUpdate("", "tool_start", json.tool);
             } else if (json.type === "tool_end") {
               onUpdate(json.result, "tool_end");
+            } else if (json.type === "error") {
+              // Handle structured error event from server
+              onUpdate(json.message, "error");
             } else if (json.error) {
+              // Fallback for top-level error object
               onUpdate(json.error, "error");
             } else {
               const content = json.choices?.[0]?.delta?.content;
@@ -184,12 +189,12 @@ const ToolCard = ({ toolCall }: { toolCall: NonNullable<Message['toolCall']> }) 
         </div>
       </button>
       
-      {(expanded || isRunning) && (
+      {(expanded || isRunning || isError) && (
         <div className="border-t border-black/5 bg-white/80 backdrop-blur-xl p-5 animate-fade-in">
           <div className="flex items-center gap-2 mb-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
             <Info size={12} /> System Output
           </div>
-          <div className="text-xs font-mono text-gray-700 whitespace-pre-wrap max-h-96 overflow-y-auto custom-scrollbar leading-relaxed bg-black/5 p-4 rounded-xl border border-black/5">
+          <div className={`text-xs font-mono whitespace-pre-wrap max-h-96 overflow-y-auto custom-scrollbar leading-relaxed p-4 rounded-xl border ${isError ? 'bg-red-50 text-red-800 border-red-100' : 'bg-black/5 text-gray-700 border-black/5'}`}>
              {isRunning ? "Awaiting stream from enterprise middleware..." : toolCall.result || "Execution successful. No log output provided."}
           </div>
         </div>
@@ -477,8 +482,15 @@ const App = () => {
           };
         } else if (type === "tool_end") {
            if (aiMsg.toolCall) aiMsg.toolCall.status = "complete";
+           if (aiMsg.toolCall) aiMsg.toolCall.result = chunk;
         } else if (type === "error") {
-           aiMsg.content += `\n\n**Error**: ${chunk}`;
+           // Mark tool as error and append error message
+           if (aiMsg.toolCall) {
+               aiMsg.toolCall.status = "error";
+               aiMsg.toolCall.result = chunk; // Display error message in the box
+           } else {
+               aiMsg.content += `\n\n**Error**: ${chunk}`;
+           }
         }
         return list;
       });
@@ -606,6 +618,14 @@ const App = () => {
                          {m.content}
                        </div>
                      )}
+
+                     {/* Thinking State - Shown when content is empty and no tool is active yet (Buffering) */}
+                     {!m.content && !m.toolCall && m.role === 'assistant' && (
+                        <div className="flex items-center gap-3 px-4 py-3 bg-white/40 backdrop-blur-md border border-white/50 rounded-2xl shadow-sm animate-pulse">
+                            <BrainCircuit size={18} className="text-blue-500 animate-pulse" />
+                            <span className="text-xs font-bold text-gray-500 uppercase tracking-widest">Processing Context...</span>
+                        </div>
+                     )}
                   </div>
                 </div>
               ))}
@@ -656,8 +676,14 @@ const App = () => {
              </div>
           </div>
         </div>
+      </main>
 
-      </SettingsModal>
+      <SettingsModal 
+        open={showSettings} 
+        onClose={() => setShowSettings(false)} 
+        settings={settings} 
+        setSettings={setSettings} 
+      />
     </div>
   );
 };

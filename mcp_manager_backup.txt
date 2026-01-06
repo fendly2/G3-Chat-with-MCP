@@ -278,12 +278,17 @@ class MCPManager:
         return "Tool not found or agent disconnected."
 
     def _parse_mcp_result(self, resp) -> str:
+        # Improved error handling: Raise exception if RPC returned error
+        if resp and "error" in resp:
+             error_msg = resp['error'].get('message', 'Unknown RPC Error')
+             code = resp['error'].get('code', 'N/A')
+             raise Exception(f"MCP Error ({code}): {error_msg}")
+             
         if resp and "result" in resp:
             content = resp["result"].get("content", [])
             text_content = [c["text"] for c in content if c.get("type") == "text"]
             return "\n".join(text_content)
-        elif resp and "error" in resp:
-             return f"Error: {resp['error'].get('message')}"
+            
         return "Empty response."
 
     def list_servers_status(self):

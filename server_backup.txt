@@ -131,8 +131,19 @@ async def smart_stream_generator(request: ChatCompletionRequest, req: Request):
         
         messages = [{"role": m.role, "content": m.content, "tool_call_id": m.tool_call_id} for m in request.messages]
         
+        # SYSTEM PROMPT OPTIMIZATION: Discourage filler text
+        system_instruction = (
+            "You are a helpful Dell Tech assistant. You have access to tools. "
+            "IMPORTANT: When you need to use a tool, use it DIRECTLY immediately. "
+            "Do NOT output conversational filler like 'Let me check that' or 'I will look for you' before calling the tool. "
+            "Just call the function."
+        )
+
         if messages and messages[0]['role'] != 'system':
-            messages.insert(0, {"role": "system", "content": "You are a helpful Dell Tech assistant. You have access to tools. Use them whenever data is needed (email, calendar)."})
+            messages.insert(0, {"role": "system", "content": system_instruction})
+        elif messages and messages[0]['role'] == 'system':
+            # Append instruction to existing system prompt if possible, or just rely on it
+            messages[0]['content'] += " " + system_instruction
 
         # --- Round 1: Initial Query ---
         stream = client.chat.completions.create(
@@ -144,29 +155,62 @@ async def smart_stream_generator(request: ChatCompletionRequest, req: Request):
         )
         
         tool_calls = []
+        text_buffer = "" # BUFFER STRATEGY: Hold text until we know if it's a tool call
+        is_tool_mode = False
         
         for chunk in stream:
             delta = chunk.choices[0].delta
+            
+            # A. Check for Tools
             if delta.tool_calls:
+                # If we detect a tool call, we enter "Tool Mode"
+                if not is_tool_mode:
+                    is_tool_mode = True
+                    text_buffer = "" # SCRUBBING: Discard any "Let me check..." filler text
+                
                 for tc in delta.tool_calls:
                     if tc.index is not None:
                          while len(tool_calls) <= tc.index:
-                             tool_calls.append({"id": "", "function": {"name": "", "arguments": ""}})
+                             # CRITICAL FIX: OpenAI requires 'type': 'function' in history
+                             tool_calls.append({
+                                 "id": "", 
+                                 "type": "function", 
+                                 "function": {"name": "", "arguments": ""}
+                             })
                          if tc.id: tool_calls[tc.index]["id"] = tc.id
                          if tc.function.name: tool_calls[tc.index]["function"]["name"] = tc.function.name
                          if tc.function.arguments: tool_calls[tc.index]["function"]["arguments"] += tc.function.arguments
             
+            # B. Check for Content
             if delta.content:
-                yield f"data: {json.dumps(chunk.model_dump())}\n\n"
+                if is_tool_mode:
+                    # If we are already building a tool, ignore any content (usually hallucinated or redundant)
+                    pass 
+                else:
+                    text_buffer += delta.content
+                    # Heuristic: If buffer gets too long (> 60 chars), it's probably not just filler, flush it.
+                    if len(text_buffer) > 60:
+                        yield f"data: {json.dumps({'choices': [{'delta': {'content': text_buffer}}]})}\n\n"
+                        text_buffer = ""
+
+        # End of Loop Processing
+        
+        # If we have residual text in buffer and NO tool was called, flush it now
+        if text_buffer and not tool_calls:
+             yield f"data: {json.dumps({'choices': [{'delta': {'content': text_buffer}}]})}\n\n"
 
         # --- Round 2: Tool Execution ---
         if tool_calls:
+             # Add the assistant's thought process (tool call request) to history
+             # Note: We set content to None or "" because we scrubbed the filler from the user view.
+             # OpenAI accepts content=None when tool_calls are present.
              messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
              
              for tc in tool_calls:
                  func_name = tc["function"]["name"]
                  call_id = tc["id"]
                  
+                 # Notify Frontend: Tool Started
                  yield f"data: {json.dumps({'type': 'tool_start', 'tool': func_name})}\n\n"
                  
                  try:
@@ -176,15 +220,19 @@ async def smart_stream_generator(request: ChatCompletionRequest, req: Request):
                      # CALL MCP (Manager routes to Local or Remote automatically)
                      result_str = await mcp_manager.execute_tool(func_name, args)
                      
+                     # Notify Frontend: Tool Success
                      yield f"data: {json.dumps({'type': 'tool_end', 'result': result_str})}\n\n"
                      
                      messages.append({"role": "tool", "tool_call_id": call_id, "content": str(result_str)})
                      
                  except Exception as e:
-                     err_msg = f"Tool Execution Failed: {str(e)}"
+                     err_msg = str(e)
+                     print(f"[Orchestrator] Tool Error: {err_msg}")
+                     # Notify Frontend: Tool Error
                      yield f"data: {json.dumps({'type': 'error', 'message': err_msg})}\n\n"
-                     messages.append({"role": "tool", "tool_call_id": call_id, "content": err_msg})
+                     messages.append({"role": "tool", "tool_call_id": call_id, "content": f"Error: {err_msg}"})
 
+             # Request final response from LLM with tool outputs
              stream2 = client.chat.completions.create(
                 model=request.model,
                 messages=messages,
@@ -198,7 +246,8 @@ async def smart_stream_generator(request: ChatCompletionRequest, req: Request):
 
     except Exception as e:
         print(f"Server Error: {e}")
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        # Send a generic error event if the whole stream fails
+        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest, req: Request):

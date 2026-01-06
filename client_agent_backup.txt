@@ -41,7 +41,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def tool_read_outlook(count=5):
     """Access local Outlook application via COM"""
     if not pythoncom:
-        return [{"error": "Windows and pywin32 required for Outlook."}]
+        raise Exception("Windows and pywin32 required for Outlook.")
         
     try:
         # Initializing COM for this thread is mandatory
@@ -72,7 +72,7 @@ def tool_read_outlook(count=5):
         finally:
             pythoncom.CoUninitialize()
     except Exception as e:
-        return [{"error": f"Outlook Access Failed: {str(e)}"}]
+        raise Exception(f"Outlook Access Failed: {str(e)}")
 
 # --- Tool 2: System Info (Demo) ---
 def tool_get_system_info():
@@ -200,8 +200,9 @@ async def handle_message(ws, data):
                     "content": [{"type": "text", "text": json.dumps(result_data, indent=2)}]
                 }
             except Exception as e:
-                err_msg = f"Execution Error: {str(e)}"
-                print(f"❌ {err_msg}")
+                err_msg = str(e)
+                print(f"❌ Execution Error: {err_msg}")
+                # STANDARD JSON-RPC ERROR
                 response["error"] = {"code": -32000, "message": err_msg}
         else:
             response["error"] = {"code": -32601, "message": f"Tool '{name}' not found on this agent."}
