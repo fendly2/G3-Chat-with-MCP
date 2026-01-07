@@ -22,13 +22,13 @@ import {
   Info,
   Trash2,
   Play,
-  Square, // Used for Stop
+  Square, 
   Power,
   Server,
-  Wrench, // Icon for tools
+  Wrench, 
   Activity,
   ShieldCheck,
-  BrainCircuit // Icon for thinking
+  BrainCircuit 
 } from "lucide-react";
 
 // --- Constants & Config ---
@@ -46,6 +46,13 @@ interface Message {
     status: "running" | "complete" | "error";
     result?: string;
   }; 
+}
+
+interface ChatSession {
+  id: string;
+  title: string;
+  messages: Message[];
+  updatedAt: number;
 }
 
 interface AppSettings {
@@ -80,7 +87,7 @@ async function streamChat(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${settings.apiKey || "dummy"}`, // Allow empty key for local LLMs
+        "Authorization": `Bearer ${settings.apiKey || "dummy"}`, 
         "X-LLM-Base-URL": settings.llmBaseUrl
       },
       body: JSON.stringify({
@@ -110,14 +117,12 @@ async function streamChat(
             const json = JSON.parse(line.slice(6));
             
             if (json.type === "tool_start") {
-              onUpdate("", "tool_start", json.tool);
+              onUpdate("", "tool_start", { name: json.tool, description: json.description });
             } else if (json.type === "tool_end") {
               onUpdate(json.result, "tool_end");
             } else if (json.type === "error") {
-              // Handle structured error event from server
               onUpdate(json.message, "error");
             } else if (json.error) {
-              // Fallback for top-level error object
               onUpdate(json.error, "error");
             } else {
               const content = json.choices?.[0]?.delta?.content;
@@ -166,18 +171,13 @@ const ToolCard = ({ toolCall }: { toolCall: NonNullable<Message['toolCall']> }) 
           <div className="flex flex-col items-start text-left min-w-0 flex-1">
              <div className="flex items-center gap-2 w-full">
                <span className="font-bold tracking-tight text-base text-gray-900 truncate">{toolCall.name}</span>
-               {toolCall.description && (
-                  <span className="hidden sm:inline-block text-xs text-gray-500/80 font-medium truncate border-l border-gray-300 pl-2">
-                    {toolCall.description}
-                  </span>
-               )}
              </div>
-             <div className="flex items-center gap-2 mt-1">
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${isRunning ? 'bg-blue-200/50' : isError ? 'bg-red-200/50' : 'bg-emerald-200/50'}`}>
+             <div className="flex items-center gap-2 mt-1 w-full">
+                <span className={`flex-shrink-0 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${isRunning ? 'bg-blue-200/50' : isError ? 'bg-red-200/50' : 'bg-emerald-200/50'}`}>
                   {isRunning ? "Running" : isError ? "Error" : "Complete"}
                 </span>
                 {toolCall.description && (
-                  <span className="sm:hidden text-[10px] text-gray-500 font-medium truncate max-w-[150px]">
+                  <span className="text-[10px] text-gray-500 font-medium truncate flex-1 block">
                     {toolCall.description}
                   </span>
                )}
@@ -304,7 +304,6 @@ const SettingsModal = ({ open, onClose, settings, setSettings }: any) => {
           
           {activeTab === 'general' ? (
               <>
-                {/* System Status Indicator - Replaces the Toggle */}
                 <div className="p-5 rounded-2xl bg-blue-50/50 border border-blue-100 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
@@ -342,8 +341,6 @@ const SettingsModal = ({ open, onClose, settings, setSettings }: any) => {
               </>
           ) : (
               <div className="space-y-6">
-                 
-                 {/* List */}
                  <div className="space-y-3">
                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Active Integrations</label>
                     {mcpServers.length === 0 && (
@@ -382,7 +379,6 @@ const SettingsModal = ({ open, onClose, settings, setSettings }: any) => {
                     ))}
                  </div>
 
-                 {/* Add New */}
                  <div className="pt-6 border-t border-gray-100 space-y-4">
                     <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Install Custom Tool</label>
                     <div className="grid grid-cols-2 gap-3">
@@ -407,7 +403,6 @@ const SettingsModal = ({ open, onClose, settings, setSettings }: any) => {
 
         </div>
 
-        {/* Footer */}
         {activeTab === 'general' && (
             <div className="p-8 bg-gray-50/50 border-t border-gray-100">
             <button className="w-full py-5 bg-black hover:bg-blue-600 text-white rounded-2xl font-black text-sm transition-all shadow-xl hover:shadow-blue-500/20 active:scale-[0.98] uppercase tracking-widest" 
@@ -425,75 +420,165 @@ const SettingsModal = ({ open, onClose, settings, setSettings }: any) => {
 // --- Main App ---
 
 const App = () => {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [showSettings, setShowSettings] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Initialization
+  // Load Settings & Sessions on Mount
   useEffect(() => {
-    const stored = localStorage.getItem('dell_ai_settings');
-    if (stored) setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(stored) });
+    // 1. Settings
+    const storedSettings = localStorage.getItem('dell_ai_settings');
+    if (storedSettings) setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(storedSettings) });
+
+    // 2. Sessions
+    const storedSessions = localStorage.getItem('dell_ai_sessions');
+    if (storedSessions) {
+        try {
+            const parsed = JSON.parse(storedSessions);
+            setSessions(parsed);
+            // Sort by latest update and select the first one
+            if (parsed.length > 0) {
+                // Ensure sorting logic matches (descending updatedAt)
+                const sorted = parsed.sort((a: ChatSession, b: ChatSession) => b.updatedAt - a.updatedAt);
+                setCurrentSessionId(sorted[0].id);
+            } else {
+                createNewSession();
+            }
+        } catch (e) {
+            console.error("Failed to load sessions", e);
+            createNewSession();
+        }
+    } else {
+        createNewSession();
+    }
   }, []);
 
+  // Save Sessions on Change
+  useEffect(() => {
+    if (sessions.length > 0) {
+        localStorage.setItem('dell_ai_sessions', JSON.stringify(sessions));
+    }
+  }, [sessions]);
+
+  // Scroll to bottom on new messages
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streaming]);
+  }, [sessions, currentSessionId, streaming]);
 
-  const sendMessage = async () => {
-    if (!input.trim() || streaming) return;
+  const createNewSession = () => {
+      const newSession: ChatSession = {
+          id: Date.now().toString(),
+          title: "New Workspace",
+          messages: [],
+          updatedAt: Date.now()
+      };
+      setSessions(prev => [newSession, ...prev]);
+      setCurrentSessionId(newSession.id);
+  };
+
+  const handleDeleteSession = (e: React.MouseEvent, id: string) => {
+      e.stopPropagation();
+      setSessions(prev => {
+          const filtered = prev.filter(s => s.id !== id);
+          if (filtered.length === 0) {
+             // If all deleted, create new
+             setTimeout(createNewSession, 0); 
+             return [];
+          }
+          // If we deleted the current one, switch to the first available
+          if (id === currentSessionId) {
+             setCurrentSessionId(filtered[0].id);
+          }
+          return filtered;
+      });
+  };
+
+  const getCurrentSession = () => sessions.find(s => s.id === currentSessionId);
+  const currentMessages = getCurrentSession()?.messages || [];
+
+  const sendMessage = async (overrideInput?: string) => {
+    const textToSend = overrideInput || input;
+    if (!textToSend.trim() || streaming || !currentSessionId) return;
     
-    const userMsg: Message = { id: Date.now().toString(), role: "user", content: input, timestamp: Date.now() };
-    const newHistory = [...messages, userMsg];
+    // Capture session ID at start to prevent closure staleness issues
+    const targetSessionId = currentSessionId;
     
-    setMessages(newHistory);
     setInput("");
     setStreaming(true);
 
+    const userMsg: Message = { id: Date.now().toString(), role: "user", content: textToSend, timestamp: Date.now() };
+
+    // 1. Optimistic Update: Add User Message & Update Title if needed
+    setSessions(prev => prev.map(s => {
+        if (s.id === targetSessionId) {
+            const newMessages = [...s.messages, userMsg];
+            // Auto-title logic: if it's the first message
+            let newTitle = s.title;
+            if (s.messages.length === 0) {
+                newTitle = textToSend.slice(0, 30) + (textToSend.length > 30 ? "..." : "");
+            }
+            return { ...s, messages: newMessages, title: newTitle, updatedAt: Date.now() };
+        }
+        return s;
+    }));
+
     const assistantId = "ai-" + Date.now();
-    let currentContent = "";
+    
+    // Construct history for API call from current state (must fetch fresh state)
+    // We can't use 'currentMessages' here because it might be stale in this closure
+    // So we assume the optimistic update worked and build api history manually
+    // Actually, let's just grab the messages from the state setter to be safe, 
+    // BUT streamChat is async. 
+    // Safest way: Grab the session from the 'sessions' state *ref* if we had one, 
+    // or just rely on the fact that we just updated it.
+    // Let's use a functional approach to get the history inside streamChat call? No, streamChat needs array.
+    
+    // Re-find session to get history (including the user msg we just added conceptually)
+    // Note: State update is async, so 'sessions' variable is stale.
+    // We will construct `apiHistory` by appending userMsg to the known `currentMessages`.
+    // Wait, `currentMessages` is also from render scope.
+    // Correct approach:
+    const activeSession = sessions.find(s => s.id === targetSessionId);
+    const apiHistory = activeSession ? [...activeSession.messages, userMsg] : [userMsg];
 
-    await streamChat(newHistory, settings, (chunk, type, meta) => {
-      setMessages(prev => {
-        const list = [...prev];
-        let aiMsg = list.find(m => m.id === assistantId);
-        
-        if (!aiMsg) {
-          aiMsg = { id: assistantId, role: "assistant", content: "", timestamp: Date.now() };
-          list.push(aiMsg);
-        }
+    await streamChat(apiHistory, settings, (chunk, type, meta) => {
+      setSessions(prev => prev.map(s => {
+        if (s.id === targetSessionId) {
+            const list = [...s.messages];
+            let aiMsg = list.find(m => m.id === assistantId);
+            
+            if (!aiMsg) {
+              aiMsg = { id: assistantId, role: "assistant", content: "", timestamp: Date.now() };
+              list.push(aiMsg);
+            }
 
-        if (type === "text") {
-          currentContent += chunk;
-          aiMsg.content = currentContent;
-        } else if (type === "tool_start") {
-          const toolDescriptions: Record<string, string> = {
-            "read_outlook_emails": "Retrieving latest communications from your Outlook secure inbox.",
-            "read_recent_emails": "Scanning MAPI folders for recent exchange items.",
-            "draft_email": "Composing a new message draft based on current workspace context.",
-            "get_calendar": "Accessing scheduling data to synchronize your agenda.",
-          };
-          aiMsg.toolCall = { 
-            name: meta, 
-            description: toolDescriptions[meta] || "Initiating an integrated enterprise utility function.",
-            status: "running" 
-          };
-        } else if (type === "tool_end") {
-           if (aiMsg.toolCall) aiMsg.toolCall.status = "complete";
-           if (aiMsg.toolCall) aiMsg.toolCall.result = chunk;
-        } else if (type === "error") {
-           // Mark tool as error and append error message
-           if (aiMsg.toolCall) {
-               aiMsg.toolCall.status = "error";
-               aiMsg.toolCall.result = chunk; // Display error message in the box
-           } else {
-               aiMsg.content += `\n\n**Error**: ${chunk}`;
-           }
+            if (type === "text") {
+              aiMsg.content += chunk;
+            } else if (type === "tool_start") {
+              aiMsg.toolCall = { 
+                name: meta.name || "Unknown Tool", 
+                description: meta.description || "Initiating enterprise tool execution protocol...",
+                status: "running" 
+              };
+            } else if (type === "tool_end") {
+               if (aiMsg.toolCall) aiMsg.toolCall.status = "complete";
+               if (aiMsg.toolCall) aiMsg.toolCall.result = chunk;
+            } else if (type === "error") {
+               if (aiMsg.toolCall) {
+                   aiMsg.toolCall.status = "error";
+                   aiMsg.toolCall.result = chunk; 
+               } else {
+                   aiMsg.content += `\n\n**Error**: ${chunk}`;
+               }
+            }
+            return { ...s, messages: list, updatedAt: Date.now() };
         }
-        return list;
-      });
+        return s;
+      }));
     });
 
     setStreaming(false);
@@ -502,7 +587,7 @@ const App = () => {
   return (
     <div className="flex h-screen bg-[#FBFBFD] font-sans text-gray-900 selection:bg-blue-100 selection:text-blue-900 overflow-hidden">
       
-      {/* Sidebar - The "Jobs" Pro Aesthetic */}
+      {/* Sidebar - Persistent History */}
       <aside className="w-[300px] bg-[#1C1C1E] text-white flex flex-col flex-shrink-0 hidden md:flex shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-[300px] bg-gradient-to-b from-blue-600/20 to-transparent pointer-events-none" />
         
@@ -515,20 +600,40 @@ const App = () => {
           </div>
 
           <button 
-            onClick={() => setMessages([])}
+            onClick={createNewSession}
             className="w-full flex items-center justify-between px-5 py-4 bg-white/10 hover:bg-white/20 text-white rounded-2xl transition-all group border border-white/5 hover:border-white/20 shadow-lg hover:shadow-xl backdrop-blur-md active:scale-[0.98]"
           >
             <div className="flex items-center text-sm font-semibold"><Plus size={18} className="mr-3 text-blue-400"/> New Workspace</div>
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-2 relative z-10 custom-scrollbar">
-          <div className="px-4 pb-4 text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Recent Sessions</div>
-          {messages.length > 0 ? (
-            <button className="w-full text-left px-5 py-4 text-sm text-gray-300 hover:bg-white/10 hover:text-white rounded-2xl truncate transition-all flex items-center group border border-transparent hover:border-white/5">
-              <MessageSquare size={16} className="mr-3 text-gray-600 group-hover:text-blue-400 transition-colors" />
-              <span className="truncate font-medium">{messages[0].content}</span>
-            </button>
+        <div className="flex-1 overflow-y-auto px-4 py-2 relative z-10 custom-scrollbar space-y-1">
+          <div className="px-4 pb-2 text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">History</div>
+          {sessions.length > 0 ? (
+             sessions
+                .sort((a, b) => b.updatedAt - a.updatedAt)
+                .map(session => (
+                <button 
+                    key={session.id}
+                    onClick={() => setCurrentSessionId(session.id)}
+                    className={`w-full text-left px-4 py-3 text-sm rounded-xl truncate transition-all flex items-center justify-between group border ${
+                        currentSessionId === session.id 
+                        ? 'bg-white/10 text-white border-white/10 shadow-sm' 
+                        : 'text-gray-400 hover:bg-white/5 hover:text-gray-200 border-transparent'
+                    }`}
+                >
+                    <div className="flex items-center truncate mr-2">
+                        <MessageSquare size={14} className={`mr-3 flex-shrink-0 ${currentSessionId === session.id ? 'text-blue-400' : 'text-gray-600 group-hover:text-gray-400'}`} />
+                        <span className="truncate font-medium">{session.title || "New Workspace"}</span>
+                    </div>
+                    <div 
+                        onClick={(e) => handleDeleteSession(e, session.id)}
+                        className={`p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/20 hover:text-red-400 ${currentSessionId === session.id ? 'opacity-0' : ''}`} // Only show delete on hover
+                    >
+                        <Trash2 size={12} />
+                    </div>
+                </button>
+             ))
           ) : (
              <div className="px-5 py-10 text-center border-2 border-dashed border-white/5 rounded-2xl m-2">
                 <span className="text-gray-600 text-xs font-medium">No history available</span>
@@ -553,12 +658,15 @@ const App = () => {
           <span className="font-bold text-gray-900 flex items-center gap-2">
             <div className="w-6 h-6 rounded bg-blue-600"></div> DellTech AI
           </span>
-          <button onClick={() => setShowSettings(true)}><Settings size={20} className="text-gray-500" /></button>
+          <div className="flex items-center gap-2">
+            <button onClick={createNewSession}><Plus size={20} className="text-gray-500 mr-2" /></button>
+            <button onClick={() => setShowSettings(true)}><Settings size={20} className="text-gray-500" /></button>
+          </div>
         </header>
 
         {/* Chat Area */}
         <div className="flex-1 overflow-y-auto scroll-smooth relative z-10">
-          {messages.length === 0 ? (
+          {currentMessages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center p-8 text-center animate-fade-in">
               <div className="w-24 h-24 bg-gradient-to-tr from-blue-50 to-indigo-50 rounded-[2rem] flex items-center justify-center mb-10 shadow-2xl shadow-blue-100/50 ring-1 ring-black/5">
                 <Sparkles className="text-blue-600" size={48} />
@@ -567,12 +675,12 @@ const App = () => {
               <p className="text-gray-500 max-w-lg mb-12 text-lg leading-relaxed font-medium">Secure, integrated enterprise AI workspace connected to your daily tools.</p>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-3xl w-full">
-                <button onClick={() => setInput("Check my latest emails from the team")} className="p-6 rounded-[1.5rem] border border-gray-100 bg-white hover:border-blue-200 hover:shadow-xl hover:shadow-blue-500/10 text-left transition-all group relative overflow-hidden active:scale-[0.99]">
+                <button onClick={() => sendMessage("Check my latest emails from the team")} className="p-6 rounded-[1.5rem] border border-gray-100 bg-white hover:border-blue-200 hover:shadow-xl hover:shadow-blue-500/10 text-left transition-all group relative overflow-hidden active:scale-[0.99]">
                   <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity transform group-hover:scale-110 duration-500"><Mail size={64} /></div>
                   <div className="font-bold text-gray-900 text-base mb-1 group-hover:text-blue-600 transition-colors">Check Outlook</div>
                   <div className="text-sm text-gray-500 font-medium">"Read latest 5 emails..."</div>
                 </button>
-                <button onClick={() => setInput("Draft a summary of pending tasks")} className="p-6 rounded-[1.5rem] border border-gray-100 bg-white hover:border-purple-200 hover:shadow-xl hover:shadow-purple-500/10 text-left transition-all group relative overflow-hidden active:scale-[0.99]">
+                <button onClick={() => sendMessage("Draft a summary of pending tasks")} className="p-6 rounded-[1.5rem] border border-gray-100 bg-white hover:border-purple-200 hover:shadow-xl hover:shadow-purple-500/10 text-left transition-all group relative overflow-hidden active:scale-[0.99]">
                   <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity transform group-hover:scale-110 duration-500"><LayoutDashboard size={64} /></div>
                   <div className="font-bold text-gray-900 text-base mb-1 group-hover:text-purple-600 transition-colors">Draft Report</div>
                   <div className="text-sm text-gray-500 font-medium">"Create a task summary..."</div>
@@ -581,7 +689,7 @@ const App = () => {
             </div>
           ) : (
             <div className="max-w-4xl mx-auto py-12 px-4 md:px-8">
-              {messages.map((m, i) => (
+              {currentMessages.map((m, i) => (
                 <div key={i} className={`mb-10 animate-fade-in group flex gap-6 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
                   
                   {/* Avatar */}
@@ -659,7 +767,7 @@ const App = () => {
                 
                 <div className="absolute bottom-3 right-3">
                     <button 
-                    onClick={sendMessage}
+                    onClick={() => sendMessage()}
                     disabled={!input.trim() || streaming}
                     className={`p-3 rounded-2xl transition-all duration-300 flex items-center justify-center ${
                         input.trim() && !streaming 

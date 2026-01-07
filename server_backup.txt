@@ -129,6 +129,13 @@ async def smart_stream_generator(request: ChatCompletionRequest, req: Request):
         # 1. Fetch available tools dynamically from MCP Manager (Local + Remote)
         tools = await mcp_manager.get_all_tools_definitions()
         
+        # Create a lookup map for tool descriptions: { "tool_name": "Description..." }
+        tool_descriptions_map = {}
+        if tools:
+            for t in tools:
+                if "function" in t:
+                    tool_descriptions_map[t["function"]["name"]] = t["function"].get("description", "")
+
         messages = [{"role": m.role, "content": m.content, "tool_call_id": m.tool_call_id} for m in request.messages]
         
         # SYSTEM PROMPT OPTIMIZATION: Discourage filler text
@@ -210,8 +217,11 @@ async def smart_stream_generator(request: ChatCompletionRequest, req: Request):
                  func_name = tc["function"]["name"]
                  call_id = tc["id"]
                  
-                 # Notify Frontend: Tool Started
-                 yield f"data: {json.dumps({'type': 'tool_start', 'tool': func_name})}\n\n"
+                 # Look up dynamic description
+                 desc = tool_descriptions_map.get(func_name, "Executing enterprise utility function...")
+                 
+                 # Notify Frontend: Tool Started (With Description)
+                 yield f"data: {json.dumps({'type': 'tool_start', 'tool': func_name, 'description': desc})}\n\n"
                  
                  try:
                      args = json.loads(tc["function"]["arguments"])
