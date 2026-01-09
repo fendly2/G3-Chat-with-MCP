@@ -1,7 +1,7 @@
 {
   "servers": {
     "mcp-time": {
-      "command": "python",
+      "command": "C:\\Python311\\python.exe",
       "args": [
         "-m",
         "mcp_server_time",
@@ -11,7 +11,7 @@
       "enabled": true
     },
     "mcp-playwright": {
-      "command": "npx.cmd",
+      "command": "C:\\Program Files\\nodejs\\npx.cmd",
       "args": [
         "-y",
         "@playwright/mcp@latest"

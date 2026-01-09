@@ -9,6 +9,7 @@ import os
 import shutil
 from typing import Dict, Any, List, Optional
 import sys
+import traceback
 from fastapi import WebSocket, WebSocketDisconnect
 
 class MCPManager:
@@ -207,6 +208,7 @@ class MCPManager:
             
         except Exception as e:
             print(f"[MCP] Failed to start {name}: {e}")
+            traceback.print_exc()
 
     async def _perform_handshake(self, process):
         """Performs the standard MCP initialization sequence."""

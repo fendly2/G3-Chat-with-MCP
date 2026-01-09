@@ -23,18 +23,35 @@ DellTechAI/
 
 ## 🚀 开发指南 (Development)
 
-1.  **启动后端**:
-    ```bash
-    pip install -r backend/requirements.txt
-    python backend/server.py
-    ```
-2.  **启动前端**:
-    ```bash
-    cd frontend
-    npm install
-    npm run dev
-    ```
-    访问 `http://localhost:3000`
+### 1. 启动后端 (Backend)
+```bash
+cd backend
+pip install -r requirements.txt
+python server.py
+```
+*服务将在 `http://localhost:8000` 启动*
+
+### 2. 启动前端 (Frontend)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+*访问 `http://localhost:3000`*
+
+### 3. 启动客户端 (Client Agent)
+此脚本需在**员工的 Windows 笔记本电脑**上运行，用于连接 Outlook。
+
+**依赖安装:**
+```bash
+pip install websockets pywin32
+```
+
+**运行命令:**
+将 `localhost` 替换为服务器 IP (如果不在同一台机器)。
+```bash
+python client/client_agent.py --server ws://localhost:8000/ws/mcp
+```
 
 ## 📦 生产部署 (Production)
 

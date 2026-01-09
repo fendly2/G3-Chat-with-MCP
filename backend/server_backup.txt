@@ -271,4 +271,5 @@ async def chat_completions(request: ChatCompletionRequest, req: Request):
     return StreamingResponse(smart_stream_generator(request, req), media_type="text/event-stream")
 
 if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+    # FIX: Disable reload to prevent Windows subprocess/event loop issues
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)
