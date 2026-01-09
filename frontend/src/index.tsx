@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { 
-  MessageSquare, Settings, Plus, Bot, User, ChevronDown, ChevronRight, 
-  Loader2, TerminalSquare, Check, Menu, X, Zap, Send, LayoutDashboard, 
-  Mail, Sparkles, Cpu, Info, Trash2, Play, Square, Power, Server, 
-  Wrench, Activity, ShieldCheck, BrainCircuit 
+  MessageSquare, Settings, Plus, Bot, User, ChevronDown, 
+  Loader2, TerminalSquare, X, Send, LayoutDashboard, 
+  Mail, Sparkles, Cpu, Info, Trash2, Play, Square, 
+  Activity, ShieldCheck, BrainCircuit 
 } from "lucide-react";
 import "./index.css"; // Import Tailwind styles
 
