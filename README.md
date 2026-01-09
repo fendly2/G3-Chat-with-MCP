@@ -32,24 +32,16 @@
 
 ## 🏗️ 系统架构 (Architecture)
 
-```mermaid
-graph TD
-    User[User (Browser)] <-->|HTTP/Stream| Frontend[React App]
-    Frontend <-->|REST API| Backend[FastAPI Server]
-    
-    subgraph "Backend Server (Windows)"
-        Backend <-->|MCP Protocol| MCP_Manager[MCP Orchestrator]
-        MCP_Manager <-->|StdIO| Local_Tool1[Time Server]
-        MCP_Manager <-->|StdIO| Local_Tool2[Playwright]
-    end
-    
-    subgraph "Employee Laptop (Client)"
-        Remote_Agent[Python Client Agent] <-->|COM/MAPI| Outlook[Microsoft Outlook]
-    end
-    
-    MCP_Manager <-->|WebSocket| Remote_Agent
-    Backend <-->|API| LLM[OpenAI / Enterprise LLM]
-```
+本系统采用高效的三层架构设计：
+
+1.  **Frontend (用户层)**: 
+    *   基于 React 构建的现代化 Web 界面，负责与用户交互并展示流式 AI 响应。
+2.  **Backend (核心层)**: 
+    *   运行在 Windows Server 上的 FastAPI 服务。
+    *   内置 **MCP Manager**，负责动态加载工具、管理子进程以及维持 WebSocket 连接。
+3.  **Context & Tools (能力层)**:
+    *   **Local Tools**: 服务器本地运行的 Python/Node 脚本 (如 Playwright)。
+    *   **Remote Agents**: 运行在员工电脑上的 Python 轻量级代理，通过 WebSocket 安全地暴露 Outlook COM 接口给服务端。
 
 ---
 
@@ -139,4 +131,4 @@ DellTechAI/
 
 ---
 
-*Powered by Dell Technologies - AI Solution Architecture Team*
+*Powered by FENDLY AI OPERATIONS*
