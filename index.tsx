@@ -1,43 +1,17 @@
 import React, { useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { 
-  MessageSquare, 
-  Settings, 
-  Plus, 
-  Bot, 
-  User, 
-  ChevronDown, 
-  ChevronRight, 
-  Loader2, 
-  TerminalSquare, 
-  Check,
-  Menu,
-  X,
-  Zap,
-  Send,
-  LayoutDashboard,
-  Mail,
-  Sparkles,
-  Cpu,
-  Info,
-  Trash2,
-  Play,
-  Square, 
-  Power,
-  Server,
-  Wrench, 
-  Activity,
-  ShieldCheck,
-  BrainCircuit 
+  MessageSquare, Settings, Plus, Bot, User, ChevronDown, ChevronRight, 
+  Loader2, TerminalSquare, Check, Menu, X, Zap, Send, LayoutDashboard, 
+  Mail, Sparkles, Cpu, Info, Trash2, Play, Square, Power, Server, 
+  Wrench, Activity, ShieldCheck, BrainCircuit 
 } from "lucide-react";
+import "./index.css"; // Import Tailwind styles
 
 // --- Constants & Config ---
-// Intelligent Backend URL Resolution:
-// 1. If running on port 3000 (Local Dev via 'serve'), point to localhost:8000
-// 2. If running on standard ports 80/443 (Production Nginx), use relative path (proxy handles it)
-const BACKEND_URL = window.location.port === "3000" 
-  ? "http://localhost:8000" 
-  : ""; 
+// Since we use Vite Proxy (in dev) and Nginx Proxy (in prod), 
+// all API calls are relative to the current origin.
+const BACKEND_URL = ""; 
 
 // --- Types ---
 interface Message {
