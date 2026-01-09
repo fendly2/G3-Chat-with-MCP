@@ -16,23 +16,25 @@
 
 ## 2. 前端构建 (Frontend Build) - **生成静态文件**
 
-为了在 Nginx 上部署，您需要先将源代码编译为静态文件（HTML/JS/CSS）。
+为了在 Nginx 上部署，您需要先进入 `frontend` 目录并将源代码编译为静态文件。
 
-1.  **安装前端依赖**:
-    在项目根目录下运行 PowerShell：
+1.  **进入前端目录**:
+    ```powershell
+    cd frontend
+    ```
+
+2.  **安装依赖**:
     ```powershell
     npm install
     ```
 
-2.  **执行构建**:
+3.  **执行构建**:
     ```powershell
     npm run build
     ```
     
-3.  **获取构建产物**:
-    构建完成后，会在根目录下生成一个名为 **`dist`** 的文件夹。
-    *   这个 `dist` 文件夹里的内容就是您需要提供给 Nginx 的“静态文件”。
-    *   它包含了 `index.html` 以及编译后的 `assets/` 目录。
+4.  **获取构建产物**:
+    构建完成后，`frontend/dist` 文件夹里的内容就是您需要提供给 Nginx 的“静态文件”。
 
 ---
 
@@ -40,19 +42,26 @@
 
 假设项目源码位于 `C:\App\DellTechAI`。
 
-1.  **安装 Python 依赖**:
+1.  **进入后端目录**:
     ```powershell
-    cd C:\App\DellTechAI
-    pip install fastapi uvicorn[standard] openai websockets pydantic requests mcp-server-time
+    cd ..\backend
     ```
 
-2.  **初始化 Playwright (首次运行)**:
+2.  **安装 Python 依赖**:
     ```powershell
+    pip install -r requirements.txt
+    ```
+
+3.  **初始化 Playwright (首次运行)**:
+    ```powershell
+    playwright install
     npx -y @playwright/mcp@latest install
     ```
 
-3.  **注册为 Windows 服务 (推荐)**:
-    使用 NSSM 将 `python backend/server.py` 注册为服务，确保开机自启（参考旧版文档或 NSSM 使用手册）。
+4.  **注册为 Windows 服务 (推荐)**:
+    使用 NSSM 将 `python backend/server.py` 注册为服务。
+    *   **Startup Directory**: `C:\App\DellTechAI` (注意：建议设为根目录，以便 server.py 能正确找到同级模块)
+    *   **Arguments**: `backend/server.py`
 
 ---
 
@@ -67,8 +76,8 @@ server {
     listen       80;
     server_name  localhost;
 
-    # === 关键：指向 npm run build 生成的 dist 目录 ===
-    root   C:/App/DellTechAI/dist;
+    # === 关键：指向 frontend/dist 目录 ===
+    root   C:/App/DellTechAI/frontend/dist;
     index  index.html;
 
     # 1. 前端静态文件支持 (SPA 模式)
@@ -100,10 +109,6 @@ server {
 
 ---
 
-## 5. 验证部署
+## 5. 客户端 (Client)
 
-1.  启动 Python 后端 (端口 8000)。
-2.  启动 Nginx (端口 80)。
-3.  访问 `http://localhost` 或服务器 IP。
-
-此时，您应该能看到界面，并且 API 调用会自动路由到后端，无需配置 IP 地址。
+分发 `client/client_agent.py` 给员工。
