@@ -12,7 +12,13 @@ import sys
 from fastapi import WebSocket, WebSocketDisconnect
 
 class MCPManager:
-    def __init__(self, config_path: str = "mcp_config.json"):
+    def __init__(self, config_path: str = None):
+        # Intelligent path resolution:
+        # If no path provided, look for 'mcp_config.json' in the same directory as this script
+        if not config_path:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            config_path = os.path.join(base_dir, "mcp_config.json")
+            
         self.config_path = config_path
         self.processes: Dict[str, asyncio.subprocess.Process] = {}
         self.config = self._load_config()
@@ -25,16 +31,21 @@ class MCPManager:
 
     def _load_config(self) -> Dict[str, Any]:
         if not os.path.exists(self.config_path):
+            print(f"[MCP] Config not found at {self.config_path}, creating empty default.")
             return {"servers": {}}
         try:
             with open(self.config_path, 'r') as f:
                 return json.load(f)
-        except:
+        except Exception as e:
+            print(f"[MCP] Error loading config: {e}")
             return {"servers": {}}
 
     def save_config(self):
-        with open(self.config_path, 'w') as f:
-            json.dump(self.config, f, indent=2)
+        try:
+            with open(self.config_path, 'w') as f:
+                json.dump(self.config, f, indent=2)
+        except Exception as e:
+            print(f"[MCP] Error saving config: {e}")
 
     # --- Remote Agent Management (WebSocket) ---
     
@@ -52,7 +63,6 @@ class MCPManager:
         print(f"[MCP] Remote Agent Registered: {client_id}")
 
         # 2. Trigger initial Tool Discovery (Fire and Forget initially)
-        # We start a separate short-lived task to ask for tools so we can enter the receive loop immediately
         asyncio.create_task(self._send_remote_json_rpc(client_id, "tools/list"))
 
         # 3. Blocking Receive Loop
@@ -60,7 +70,6 @@ class MCPManager:
             while True:
                 # Wait for messages from the laptop
                 text = await websocket.receive_text()
-                # print(f"[Debug WS {client_id}] Received: {text}")
                 
                 try:
                     data = json.loads(text)
@@ -84,13 +93,13 @@ class MCPManager:
                             agent["tools"] = tools
                             print(f"[MCP] Agent {client_id} loaded {len(tools)} tools: {[t['name'] for t in tools]}")
                 
-                # Is this a heartbeat/ping? (Optional extension)
+                # Is this a heartbeat/ping?
                 if data.get("method") == "ping":
                     await websocket.send_text(json.dumps({"jsonrpc": "2.0", "result": "pong", "id": data.get("id")}))
 
         except WebSocketDisconnect:
             print(f"[MCP] Agent {client_id} disconnected normally.")
-            raise # Re-raise to let Server handle cleanup
+            raise 
         except Exception as e:
             print(f"[MCP] Agent {client_id} error: {e}")
             raise
@@ -120,9 +129,7 @@ class MCPManager:
         agent["futures"][msg_id] = future
         
         try:
-            # print(f"[MCP] Sending {method} to {client_id}")
             await agent["ws"].send_text(json.dumps(req))
-            # Wait for response with timeout
             response = await asyncio.wait_for(future, timeout=30.0)
             return response
         except asyncio.TimeoutError:
@@ -173,21 +180,57 @@ class MCPManager:
         
         print(f"[MCP] Launching Local Server: {name}...")
         try:
+            # Resolve Python executable
             if cmd == "python":
                 if shutil.which("python3"): cmd = "python3"
                 elif shutil.which("python"): cmd = "python"
                 
+            # Ensure args is a flat list of strings
+            final_args = [str(a) for a in args]
+            
             process = await asyncio.create_subprocess_exec(
-                cmd, *args,
+                cmd, *final_args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
             )
             self.processes[name] = process
+            
+            # --- CRITICAL: MCP Protocol Handshake ---
+            # 1. Initialize
+            print(f"[MCP] Handshaking with {name}...")
+            await self._perform_handshake(process)
+            
+            # 2. List Tools
             await self._refresh_tools(name)
+            
         except Exception as e:
             print(f"[MCP] Failed to start {name}: {e}")
+
+    async def _perform_handshake(self, process):
+        """Performs the standard MCP initialization sequence."""
+        # A. Send 'initialize'
+        init_payload = {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+                "roots": {"listChanged": True},
+                "sampling": {}
+            },
+            "clientInfo": {"name": "DellTechHost", "version": "0.1.0"}
+        }
+        
+        init_response = await self._send_json_rpc(process, "initialize", init_payload, id=0)
+        if not init_response:
+             print("[MCP] Handshake failed: No response to initialize.")
+             return
+        
+        server_info = init_response.get("result", {}).get("serverInfo", {})
+        print(f"[MCP] Server Initialized: {server_info.get('name', 'Unknown')}")
+        
+        # B. Send 'notifications/initialized'
+        # This is a notification, so we DO NOT await a response (it would deadlock)
+        await self._send_notification(process, "notifications/initialized")
 
     async def stop_server(self, name: str):
         if name in self.processes:
@@ -211,12 +254,25 @@ class MCPManager:
             data = json.dumps(req).encode() + b"\n"
             process.stdin.write(data)
             await process.stdin.drain()
+            
             line = await process.stdout.readline()
             if not line: return None
             return json.loads(line.decode())
         except Exception as e:
             print(f"[MCP] RPC Error: {e}")
             return None
+
+    async def _send_notification(self, process, method: str, params: Any = None):
+        """Sends a JSON-RPC notification (no ID, no response expected)."""
+        if not process.stdin: return
+        req = {"jsonrpc": "2.0", "method": method, "params": params or {}}
+        try:
+            data = json.dumps(req).encode() + b"\n"
+            process.stdin.write(data)
+            await process.stdin.drain()
+            # DO NOT READ STDOUT HERE
+        except Exception as e:
+            print(f"[MCP] Notification Error: {e}")
 
     async def _refresh_tools(self, server_name: str):
         proc = self.processes.get(server_name)

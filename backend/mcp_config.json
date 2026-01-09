@@ -1,0 +1,25 @@
+{
+  "servers": {
+    "mcp-time": {
+      "command": "python",
+      "args": [
+        "-m",
+        "mcp_server_time",
+        "--local-timezone=Asia/Shanghai"
+      ],
+      "env": {},
+      "enabled": true
+    },
+    "mcp-playwright": {
+      "command": "npx.cmd",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ],
+      "env": {
+        "HEADLESS": "true"
+      },
+      "enabled": true
+    }
+  }
+}
