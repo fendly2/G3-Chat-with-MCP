@@ -32,7 +32,12 @@ import {
 } from "lucide-react";
 
 // --- Constants & Config ---
-const BACKEND_URL = "http://localhost:8000";
+// Intelligent Backend URL Resolution:
+// 1. If running on port 3000 (Local Dev via 'serve'), point to localhost:8000
+// 2. If running on standard ports 80/443 (Production Nginx), use relative path (proxy handles it)
+const BACKEND_URL = window.location.port === "3000" 
+  ? "http://localhost:8000" 
+  : ""; 
 
 // --- Types ---
 interface Message {
@@ -780,7 +785,7 @@ const App = () => {
                 </div>
              </div>
              <div className="text-center mt-4">
-               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em] opacity-60">Authorized Use Only • Dell Technologies</p>
+               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em] opacity-60">Authorized Use Only • FENDLY AI OPERATIONS</p>
              </div>
           </div>
         </div>
